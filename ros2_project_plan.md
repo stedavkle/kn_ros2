@@ -1,7 +1,3 @@
-Of course. Here is a comprehensive summary of the complete ROS2 project architecture, incorporating all discussed components. This document is designed to serve as a detailed blueprint for the development team.
-
----
-
 ### **ROS2 System Architecture for Nanoprober Automation**
 
 **Version 1.0**
