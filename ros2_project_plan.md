@@ -63,6 +63,7 @@ ros2_ws/
 *   **Purpose:** Low-level control for a *single* manipulator. One instance launched per device.
 *   **Core Logic:** Wraps `NanoControl` and `ManipulatorEncoded` classes.
 *   **ROS2 Interfaces (Namespaced, e.g., `/manipulator1/...`):**
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Action** | `move_relative` | `your_action/MoveRelative` | Server | Executes a relative move in 3D metric coordinates. |
@@ -73,6 +74,7 @@ ros2_ws/
 *   **Core Logic:** Wraps the `ZEISSSem` class.
 *   **Platform Constraint:** **Must run on Windows** with Zeiss SmartSEM API.
 *   **ROS2 Interfaces:**
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Topic** | `/sem/scan` | `SEMScan.msg` | Publisher | Publishes the complete SEM image and metadata after a scan. |
@@ -87,6 +89,7 @@ ros2_ws/
 *   **Core Logic:** Wraps `Detector` and tracker classes.
 *   **Platform Constraint:** Recommended to run on a machine with a **dedicated GPU**.
 *   **ROS2 Interfaces:**
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Topic** | `/sem/scan` | `SEMScan.msg` | Subscriber | Primary input for image processing. |
@@ -98,6 +101,7 @@ ros2_ws/
 *   **Purpose:** Maintains a virtual state of the workspace for "what-if" collision checking.
 *   **Core Logic:** Manages a 3D scene; uses a collision-checking library.
 *   **ROS2 Interfaces:**
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Topic** | `/sem/status` | `your_msg/SEMStatus` | Subscriber | Reactively updates its internal SEM state (e.g., magnification). |
@@ -110,6 +114,7 @@ ros2_ws/
 *   **Purpose:** Generates collision-free, time-coordinated paths for multiple manipulators.
 *   **Core Logic:** Implements the Improved Conflict-Based Search (ICBS) algorithm.
 *   **ROS2 Interfaces:**
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Action** | `/planning/plan_paths` | `PlanMultiPath.action` | **Server** | **Primary Interface.** Takes start/goal pairs; result is a list of waypoint paths. |
@@ -120,6 +125,7 @@ ros2_ws/
 *   **Purpose:** Contains high-level application logic; orchestrates all other nodes.
 *   **Core Logic:** Implements state machines and control loops. Performs all coordinate transformations between pixel space and manipulator space.
 *   **ROS2 Interfaces:** Primarily a client to other nodes.
+  
 | Type | Name | Message Type | Role | Description |
 |---|---|---|---|---|
 | **Topic** | `/vision/tip_detections`| `TipDetections.msg`| Subscriber | Receives verified tip positions to close the control loop. |
@@ -129,21 +135,28 @@ ros2_ws/
 | **Action** | `/planning/plan_paths` | `PlanMultiPath.action` | Client | Requests a safe, multi-agent plan before execution. |
 | **Service**| `/simulation/update_manipulator_state`| `UpdateManipulatorState.srv` | Client | Keeps the digital twin synchronized with reality after every verified move. |
 
+#### **G. `gui_node` (The User Interface)**
+*   **Purpose:** Provides visualization of system state and a command interface for high-level tasks.
+*   **Core Logic:** Implemented using **PyQt/PySide6**. Uses a **two-thread architecture** (main GUI thread + ROS worker thread) to ensure a responsive UI.
+*   **ROS2 Interfaces:**
+  
+| Type | Name | Message Type | Role | Description |
+|---|---|---|---|---|
+| **Topic** | `/sem/scan` | `SEMScan.msg` | **Subscriber** | Receives the latest image and metadata for display. |
+| **Topic** | `/vision/tip_detections` | `TipDetections.msg`| **Subscriber** | Receives detection results. Uses a `TimeSynchronizer` with `/sem/scan` to ensure consistency. |
+| **Action**| `/coordinator/StartHighLevelTask`| `StartHighLevelTask.action`| **Client** | **Primary Command Interface.** Sends goals to the coordinator to start complex, pre-defined tasks. |
+| **Service**| `/coordinator/get_status`| `your_srv/GetSysStatus`| **Client** | Periodically calls the coordinator to fetch and display the overall system status. |
+
 ---
 
-### **4. System-Wide Workflow Example: Coordinated Multi-Tip Move**
+### **4. System-Wide Workflow Example: User-Initiated Path Execution**
 
-This workflow demonstrates the collaboration between all nodes for a complex task.
+This workflow demonstrates the collaboration of all nodes, starting from a user command.
 
-1.  **Goal:** The `coordinator` needs to move manipulators #2 and #4 to new goal positions simultaneously.
-2.  **State Sync:** The `coordinator` calls `/simulation/update_manipulator_state` with the latest verified system state to ensure the digital twin is accurate.
-3.  **Plan Request:** The `coordinator` sends a goal to the `/planning/plan_paths` action server, providing the start and goal positions for manipulators #2 and #4.
-4.  **Planning Phase:** The `path_planning_node` starts its ICBS search. During the search, it repeatedly calls the `/simulation/check_xy_collision` service to validate potential moves and build a conflict-free plan.
-5.  **Plan Reception:** The `path_planning_node` completes and returns the final waypoint paths to the `coordinator`.
-6.  **Execution Phase:** The `coordinator` begins a loop to execute the paths waypoint-by-waypoint:
-    a.  For the current waypoint, it performs the **coordinate transformation** from pixel space to 3D manipulator commands for both tips.
-    b.  It sends `move_relative` action goals to **both** `/manipulator2/` and `/manipulator4/` in parallel and waits for both to complete.
-    c.  It calls the `/sem/grab_image` action. The `sem_driver` publishes a `SEMScan`, which the `vision_node` processes and publishes a `TipDetections` message.
-    d.  The `coordinator` receives the verified positions and confirms the step was successful.
-    e.  It calls `/simulation/update_manipulator_state` to keep the digital twin in sync.
-    f.  The loop continues until all waypoints are executed.
+1.  **User Interaction:** A user defines a multi-tip movement task in the **`gui_node`** and clicks "Execute Plan."
+2.  **High-Level Command:** The `gui_node` sends a goal to the `/coordinator/StartHighLevelTask` action server. The goal contains the desired start/end positions for multiple manipulators.
+3.  **State Sync:** The `coordinator` receives the goal. It first calls the `/simulation/update_manipulator_state` service to ensure the digital twin is synchronized with the latest verified physical state.
+4.  **Planning Phase:** The `coordinator` requests a plan from the `path_planning_node` by calling the `/planning/plan_paths` action. The `path_planning_node` uses the `simulation_node`'s services to validate its search.
+5.  **Execution Phase:** The `coordinator` receives the collision-free waypoint paths and begins its `Move->See->Verify` loop for each step in the path, commanding manipulators and vision processing as previously detailed.
+6.  **Visualization:** Throughout this process, the `sem_driver` and `vision_node` are publishing `SEMScan` and `TipDetections` messages. The `gui_node`'s subscribers receive this data, synchronize it, and update the display in real-time, providing the user with live visual feedback of the operation.
+7.  **Completion:** Once the task is complete, the `coordinator` action server reports `Success` to the `gui_node`, which updates the status display for the user.
